@@ -1,2 +1,2 @@
 # PulseFlow
-Control a fan speed by heartbeats
+Control the speed of a fan by your heartbeat.
