@@ -20,30 +20,31 @@
 #include <ArduinoBLE.h>
 #include <mbed.h>
 
-// There is no sensor pairing functionality implemented as only one
-// HR sensor is active while using an indoor trainer in private spaces.
+// There is no sensor pairing functionality implemented under the assumption that there is only 1
+// HR sensor active while using the indoor trainer in private spaces.
 // However some trainers have a HR bridge function.
-// To prevent connecting to the trainer HR service, the HR sensor to connect to is hardcoded.
-// Your HR sensor name can be obtained by the NRF Connect app or your trainer software (Zwift, Rouvy, etc)
+// To prevent connecting to the trainer HR service the name of the sensor to use is hardcoded (and unique)
+// Your HR sensor name can be obtained by using the NRF Connect app or via your trainer software (Zwift, Rouvy, etc)
 
 #define SENSORNAME "HRM-Dual:560827"
 
-// To regulate the speed of the fan a PWM controlled AC dimmer used, sourced on AliExpress.
+// To regulate the speed of the fan a PWM controlled AC dimmer is used, sourced from AliExpress.
 // Tests showed that this AC dimmer works better at a lower PWM frequency than the standard Arduino PWM frequency
-// Instead of analogWriye() a MBED OS PWM function is used to generate a 250Hz PWM
+// Instead of analogWrite() a MBED OS PWM function is used to generate a 250Hz PWM, therefore that piece of code is
+// Nano 33 BLE Rev 2 specific
 
 mbed::PwmOut* pwmOnD6 = new mbed::PwmOut(digitalPinToPinName(D6));
 
-// Number of heartrate samples to smooth single readings.
+// The number of heartrate samples to smooth single readings.
 // The sensor is read once per second and the fanspeed is adjusted once per HRSAMPLES seconds.
-// The fan has some inertia of it's own, more frequent adjustments have little use.
+// The fan has some inertia of it's own, more frequent adjustments have little use and is not too slow
 
 #define HRSAMPLES 5
 
 // HR is mapped to the PWM duty-cycle with the Arduino map() function
 // A midpoint value is available to alter the steepness of the linear map at some point
-// HR values in bpm, duty-cycle in percentage 0-100% (because of interger function map())
-// Adjust to your own HR rates and non-linearities of the fan.
+// HR values in bpm, duty-cycle in percentage 0-100% (because of integer calculation inside function map())
+// Adjust these 6 values to your own heart rates (and non-linearities of the fan).
 
 #define MINHR 100
 #define MIDHR 140
@@ -54,7 +55,7 @@ mbed::PwmOut* pwmOnD6 = new mbed::PwmOut(digitalPinToPinName(D6));
 
 unsigned long currentMillis;
 
-// Used for non-blocking(delay) BLUE LED blinking to signal periphical searching
+// Used for non-blocking(delay) blue LED blinking to signal peripheral searching
 
 unsigned long previousMillisLED = 0;
 bool ledState = false;
@@ -71,8 +72,8 @@ void setup() {
   pwmOnD6->period_ms(4);
   pwmOnD6->write(0.0f);
 
-  //Set the builtin RGB LED's ports to Output, but this turns the LED's on too
-  //as the logic is inverted due to the NANO 33 BLE hardware design.
+  //Set the builtin RGB LED's ports to Output, but this turns the LED's on too!
+  //as the On/Off logic is inverted due to the NANO 33 BLE hardware design.
   //Switch the LED of by setting the port to HIGH
   //FIXME: explicit OUTPUT setting needed?
 
@@ -92,19 +93,16 @@ void setup() {
       ;
   };
 
-  // start scanning for a periphiral advertising the Heart Rate Measurement Service (GATT: UID=180D)
+  // start scanning for a peripheral advertising the Heart Rate Measurement Service (GATT: UID=180D)
 
   BLE.scanForUuid("180D");
 }
 
 void loop() {
 
-  // Obtain a periphiral advertising the HR sevice from the scan function
+  // Check if a peripheral is found and its name matches the sensorname, if not: continue scanning
 
   BLEDevice peripheral = BLE.available();
-
-  // Check if a periphiral is found an of the name matches the sensorname
-
   if (peripheral && peripheral.localName() == SENSORNAME) {
 
     // End scanning to save on resouces
@@ -120,15 +118,15 @@ void loop() {
 
     HRM2FAN(peripheral);
 
-    // No sensor connected anymore, start searching for a sensor agian
+    // The sensor is not connected anymore, start searching again
 
     previousMillisBLE = 0;
     BLE.scanForUuid("180D");
 
   } else {
 
-    // As long as no sensor found blink the Blue led.
-    // No blocking delay used as it interferes with the BLE.scan function.
+    // As long as no sensor is found blink the blue led.
+    // No delay() is used as it interferes with the BLE.scan() function.
 
     currentMillis = millis();
     if (currentMillis - previousMillisLED >= 500) {
@@ -138,9 +136,8 @@ void loop() {
     }
 
     // There seems to be an issue with the BLE.scan function and/or Nano 33 BLE Rev2.
-    // After about 5 to 10 minutes the BLE.scan function seems to break as it does no longer find any sensor.
-    // This was noticed during a coffee break between two sessions on the trainer.
-    // A workaround is to stop and start the BLE environment every 5 minutes
+    // After about 5 to 10 minutes of scanning for peripherals the BLE.scan function does not work anymore.
+    // The workaround is to stop and start the BLE environment every 5 minutes
 
     if (currentMillis - previousMillisBLE >= 300000) {
       previousMillisBLE = currentMillis;
@@ -163,20 +160,20 @@ void HRM2FAN(BLEDevice peripheral) {
   int FanDutyCycle;
   int HRavg;
 
-  // Connect to the found peripheral, if not exit and start searching for a periphiral again.
+  // Connect to the found peripheral, if not able to connect: exit and start searching for a periphiral again.
 
   if (!peripheral.connect()) {
     return;
   }
 
-  // Check for Attributes of the periphiral, if none found, disconnect, return to search again
+  // Check for attributes of the periphiral, if none found: disconnect, return to search again
 
   if (!peripheral.discoverAttributes()) {
     peripheral.disconnect();
     return;
   }
 
-  // Retrieve the hearth rate characteristic (2A37), if none found, disconnect, return to search again
+  // Retrieve the heart rate characteristic (2A37), if not available: disconnect, return to search again
 
   BLECharacteristic Characteristic = peripheral.characteristic("2A37");
   if (!Characteristic) {
@@ -185,47 +182,46 @@ void HRM2FAN(BLEDevice peripheral) {
   }
 
   // The heart rate characteristic is a 'Notify' and must be subscribed to, to get values
-  // If not able to subscribe, disconnect, return to search again
+  // If not able to subscribe: disconnect, return to search again
 
   if (!Characteristic.subscribe()) {
     peripheral.disconnect();
     return;
   };
 
-  // A connection is established, turn blue LED off, Turn green LED on
+  // A connection is established, turn the blue LED off and green LED on
 
   digitalWrite(LEDG, LOW);
   digitalWrite(LEDB, HIGH);
 
-  // Inititalize the array with HR readings to zero
+  // Inititalize the array with HR samples to zero
 
   for (int i = 0; i < HRSAMPLES; i++) HRsampleValue[i] = 0;
   HRsampleCount = 0;
 
-  // As long a the sensor is connected readout the HR from the sensor
+  // As long a the sensor is connected: read the HR from the sensor
 
   while (peripheral.connected()) {
 
-    // The characterisc 2A37 is of type Notify, check if a notification was send
+    // The characterisc 2A37 is of type Notify, check if a notification was send by the sensor
 
     if (Characteristic.valueUpdated()) {
 
-      //FIXME: is this needed?
+      //FIXME: is this read needed?
 
       Characteristic.read();
 
-      // Values a send as a variable length byte array
+      // Sensor attribute values are send as a variable length byte array
       // In case of the hearth rate it can be 2 to 512 bytes long
       // The first byte contains 8 flags (5 defined, 3 for future use, see GATT specs)
-      // the first bit in the flag byte defines if the heart rate is send in 1 or 2 bytes, 8 or 16 interger
-      // However this Arduino sketch takes a short-cut: it ignores this 1 or 2 bytes possibility as the Garmin HR sensor (and may others)
-      // only send the HR as 1 byte value.
+      // the first bit in the flag byte defines if wether the heart rate is send in 1 or 2 bytes, 8 or 16 interger.
+      // This Arduino sketch takes a short-cut: it ignores this all as the Garmin sensor only uses 1 byte to send the HR value
 
       Characteristic.readValue(HRMcharvalue, 2);
-      HRsampleValue[HRsampleCount] = HRMcharvalue[1];
+      HRsampleValue[HRsampleCount] = HRMcharvalue[1]; //retrieve the HR from the 2nd byte
       HRsampleCount++;
 
-      // When enough HR samples have been read, calculate the average, map the HR to the duty cycle, adjust the fan speed
+      // When the set number of HR samples have been read: calculate the average, map the HR to the duty cycle, adjust the fan speed
 
       if (HRsampleCount >= HRSAMPLES) {
 
@@ -245,7 +241,7 @@ void HRM2FAN(BLEDevice peripheral) {
         }
 
         // the map function returns out of range values when the input is also out of the set range
-        // if HR is outside the map range, set the duty cycle to its minimum of maximum
+        // if the HR is outside the map range, set the duty cycle to its minimum or maximum
 
         if (HRavg < MINHR) {
           FanDutyCycle = MINFAN;
