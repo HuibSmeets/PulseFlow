@@ -9,7 +9,7 @@ Image: Prototype, work in progress
 **PulseFlow** is a small Arduino sketch that connects via BLE to a HR fitness sensor like those from Garmin, Wahoo and others. The fan is connected to a PWM controllable AC dimmer. These AC dimmers can be sourced from marketplaces like AliExpress.
 
 ## Warning
-BE AWARE THAT YOU'LL BE WORKING WITH DEADLY LIVE VOLTAGES. TAKE APPROPRIATE SAFETY MEASURES WHEN CONNECTING PARTS AND USING THE DEVICE YOU CREATED. 
+BE AWARE THAT YOU'LL BE WORKING WITH DEADLY LIVE VOLTAGES. TAKE APPROPRIATE SAFETY MEASURES WHEN CONNECTING PARTS AND WHILE USING THE DEVICE YOU CREATED. 
 
 ## Limitations
 
