@@ -1,6 +1,9 @@
 # PulseFlow
 Control the speed of a cooling fan with your heart rate
 
+<img src="IMG_3430.JPG" alt="Alt text" width="400">
+Image: Prototype, work in progress
+
 ## Description
 
 **PulseFlow** is a small Arduino sketch that connects via BLE to a HR fitness sensor like those from Garmin, Wahoo and others. The fan is connected to a PWM controllable AC dimmer. These AC dimmers can be sourced from marketplaces like AliExpress.
