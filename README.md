@@ -1,7 +1,7 @@
 # PulseFlow
 Control the speed of a cooling fan with your heart rate
 
-<img src="IMG_3430.JPG" alt="Alt text" width="400">
+<img src="Prototype.JPG" alt="Alt text" width="400">
 Image: Prototype, work in progress
 
 ## Description
