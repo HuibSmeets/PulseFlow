@@ -13,7 +13,7 @@ BE AWARE THAT YOU'LL BE WORKING WITH DEADLY LIVE VOLTAGES. TAKE APPROPRIATE SAFE
 
 ## Limitations
 
-+ Your HR sensor must allow for multiple connections as your trainer software/device will connect to the sensor too (Garmin HR-Dual sensor supports multiple connections)
++ Your HR sensor must allow for multiple BLE connections as your trainer software/device will possiby have to connect to the sensor too using BLE (Garmin HR-Dual sensor supports multiple BLE connections)
 + Sensor pairing is hardcoded, see the sourcecode
 + Use a fan that has no electronic speed control of it's own.
 + The HR to fan speed mapping is hardcoded, see the sourcecode
