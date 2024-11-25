@@ -26,6 +26,7 @@ BE AWARE THAT YOU'LL BE WORKING WITH DEADLY LIVE VOLTAGES. TAKE APPROPRIATE SAFE
 ## Possible enhancements
 
 + Support different AC dimmer (not the PWM controlled one's)
++ Battery check as far as exposed (Garmin does on the HRM Dual)
 + Do away with hardcoded pairing
 + Create an UI (e.g. a 2-Line display and rotary encoder) for pairing, map settings. 
 + Alternate fan speed mapping methods (speed, power,...).
