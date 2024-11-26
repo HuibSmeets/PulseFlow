@@ -28,13 +28,6 @@
 
 #define SENSORNAME "HRM-Dual:560827"
 
-// To regulate the speed of the fan a PWM controlled AC dimmer is used, sourced from AliExpress.
-// Tests showed that this AC dimmer works better at a lower PWM frequency than the standard Arduino PWM frequency
-// Instead of analogWrite() a MBED OS PWM function is used to generate a 250Hz PWM, therefore that piece of code is
-// Nano 33 BLE Rev 2 specific
-
-mbed::PwmOut* pwmOnD6 = new mbed::PwmOut(digitalPinToPinName(D6));
-
 // The number of heartrate samples to smooth single readings.
 // The sensor is read once per second and the fanspeed is adjusted once per HRSAMPLES seconds.
 // The fan has some inertia of it's own, more frequent adjustments have little use and is not too slow
@@ -53,6 +46,13 @@ mbed::PwmOut* pwmOnD6 = new mbed::PwmOut(digitalPinToPinName(D6));
 #define MIDFAN 50
 #define MAXFAN 100
 
+// use #define the set the type of dimmer beeing used.
+//    PWM: Dimmer controlled by PWM
+//    ZCD: Dimmer that signals Zero-Crossing, sketch calculates the trigger delay
+
+//#define PWM
+#define ZCD
+
 unsigned long currentMillis;
 
 // Used for non-blocking(delay) blue LED blinking to signal peripheral searching
@@ -64,13 +64,143 @@ bool ledState = false;
 
 unsigned long previousMillisBLE = 0;
 
+#ifdef PWM
 
-void setup() {
+// To regulate the speed of the fan a PWM controlled AC dimmer is used, sourced from AliExpress.
+// Tests showed that this AC dimmer works better at a lower PWM frequency than the standard Arduino PWM frequency
+// Instead of analogWrite() a MBED OS PWM function is used to generate a 250Hz PWM, therefore that piece of code is
+// Nano 33 BLE Rev 2 specific
+
+mbed::PwmOut* pwmOnPin = new mbed::PwmOut(digitalPinToPinName(D6));
+
+#endif
+
+#ifdef ZCD
+
+// To regulate the speed of the fan an AC dimmer with Zero Crossing detection is used, sourced from AliExpress.
+// For delay timing of the triggering of the triac Nano 33 BLE Rev 2 specific code is used.
+
+#include <nrf_timer.h>
+
+// Pin definitions
+const uint8_t interruptPin = 2;  // Pin to trigger the interrupt
+const uint8_t triacPin = 6;      // Pin to trigger the TRIAC
+
+// Constants
+const uint32_t pulseWidthUs = 50;   // Pulse width in microseconds for the triac
+const uint32_t maxDelayMs = 10000;  // Maximum delay for half-sine wave in milliseconds (10 ms for 50 Hz)
+
+// Parameter for sine delay (adjustable between 0 and 100% of the sine)
+volatile uint8_t delayParameter = 0;
+
+// Interrupt handler for Zero Crossing
+void handleZC() {
+
+  NVIC_DisableIRQ(TIMER3_IRQn);
+
+  // in case dimming at the lowest and highest range: CPU cycles consume time which causes timing mis-align with the actual
+  // zero crossing therefore at the lowest and highest end the dimmer is shutoff or full.
+  // Timer is only used in the in-between values.
+
+  switch (delayParameter) {
+    case 0 ... 5:  //
+      {
+        digitalWrite(triacPin, LOW);
+        break;
+      }
+    case 95 ... 100:  //
+      {
+        digitalWrite(triacPin, HIGH);
+        break;
+      }
+    default:
+      {
+        NRF_TIMER3->TASKS_CLEAR = 1;
+        NRF_TIMER3->CC[0] = maxDelayMs - (uint32_t)delayParameter * maxDelayMs / 100.0;
+        NRF_TIMER3->TASKS_START = 1;
+        NVIC_EnableIRQ(TIMER3_IRQn);
+      }
+  }
+}
+
+// Timer3 Compare Irq Event Handler, called when timer3 has ended counting
+
+extern "C" void TIMER3_IRQHandler_v(void) {
+  NVIC_DisableIRQ(TIMER3_IRQn);
+
+  if (NRF_TIMER3->EVENTS_COMPARE[0] == 1) {
+
+    NRF_TIMER3->EVENTS_COMPARE[0] = 0;  // Clear the compare event
+
+    digitalWrite(triacPin, HIGH);  // Create a puls to trigger the triac
+    delayMicroseconds(pulseWidthUs);
+    digitalWrite(triacPin, LOW);
+
+    NRF_TIMER3->TASKS_STOP = 1;  // Stop the timer
+  }
+  NVIC_EnableIRQ(TIMER3_IRQn);
+}
+
+#endif
+
+void setupFanSpeed() {
+
+#ifdef PWM
 
   //Set the PWM frequency to 250Hz (4ms), set duty-cycle to 0 -> Fan is off
 
-  pwmOnD6->period_ms(4);
-  pwmOnD6->write(0.0f);
+  pwmOnPin->period_ms(4);
+  pwmOnPin->write(0.0f);
+
+#endif
+
+#ifdef ZCD
+
+  // configure the pin used to trigger the triac
+
+  pinMode(triacPin, OUTPUT);
+  digitalWrite(triacPin, LOW);
+
+  // setup Timer3: 32b, timermode, 1Mhz, automatic clear
+
+  NRF_TIMER3->BITMODE = TIMER_BITMODE_BITMODE_32Bit << TIMER_BITMODE_BITMODE_Pos;
+  NRF_TIMER3->MODE = TIMER_MODE_MODE_Timer << TIMER_MODE_MODE_Pos;
+  NRF_TIMER3->PRESCALER = 4UL << TIMER_PRESCALER_PRESCALER_Pos;
+  NRF_TIMER3->INTENSET = TIMER_INTENSET_COMPARE0_Enabled << TIMER_INTENSET_COMPARE0_Pos;
+  NRF_TIMER3->SHORTS = TIMER_SHORTS_COMPARE0_CLEAR_Enabled << TIMER_SHORTS_COMPARE0_CLEAR_Pos;
+
+  // configure the pin used to generate an interupt on a rising edge
+
+  pinMode(digitalPinToInterrupt(interruptPin), INPUT);
+  attachInterrupt(digitalPinToInterrupt(interruptPin), handleZC, RISING);
+
+#endif
+}
+
+void adjustFanSpeed(int percentage) {
+
+  if (percentage < 0) percentage = 0;
+  if (percentage > 100) percentage = 100;
+
+#ifdef PWM
+
+  pwmOnPin->write(percentage / 100.0f);  //division must result in a float
+
+#endif
+
+#ifdef ZCD
+
+  delayParameter = percentage;
+
+#endif
+}
+
+
+void setup() {
+
+  // do needed setups for the attached fan controller/dimmer
+
+  setupFanSpeed();
 
   //Set the builtin RGB LED's ports to Output, but this turns the LED's on too!
   //as the On/Off logic is inverted due to the NANO 33 BLE hardware design.
@@ -92,6 +222,8 @@ void setup() {
     while (1)
       ;
   };
+
+  adjustFanSpeed(MINFAN);
 
   // start scanning for a peripheral advertising the Heart Rate Measurement Service (GATT: UID=180D)
 
@@ -218,7 +350,7 @@ void HRM2FAN(BLEDevice peripheral) {
       // This Arduino sketch takes a short-cut: it ignores this all as the Garmin sensor only uses 1 byte to send the HR value
 
       Characteristic.readValue(HRMcharvalue, 2);
-      HRsampleValue[HRsampleCount] = HRMcharvalue[1]; //retrieve the HR from the 2nd byte
+      HRsampleValue[HRsampleCount] = HRMcharvalue[1];  //retrieve the HR from the 2nd byte
       HRsampleCount++;
 
       // When the set number of HR samples have been read: calculate the average, map the HR to the duty cycle, adjust the fan speed
@@ -250,9 +382,9 @@ void HRM2FAN(BLEDevice peripheral) {
           FanDutyCycle = MAXFAN;
         }
 
-        // update the duty cycle, adjust the speed of the fan
+        // adjust the speed of the fan
 
-        pwmOnD6->write(FanDutyCycle / 100.0f);  //division must result in a float
+        adjustFanSpeed(FanDutyCycle);
 
         // clear the array with HR samples
 
@@ -266,6 +398,7 @@ void HRM2FAN(BLEDevice peripheral) {
 
   // connection lost, set the fan to it's lowest defined speed, switch of the green LED
 
-  pwmOnD6->write(MINFAN / 100.0f);
+  adjustFanSpeed(MINFAN);
+
   digitalWrite(LEDG, HIGH);
 }
