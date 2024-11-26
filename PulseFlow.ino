@@ -88,10 +88,10 @@ const uint8_t triacPin = 6;      // Pin to trigger the TRIAC
 
 // Constants
 const uint32_t pulseWidthUs = 50;   // Pulse width in microseconds for the triac
-const uint32_t maxDelayMs = 10000;  // Maximum delay for half-sine wave in milliseconds (10 ms for 50 Hz)
+const uint32_t halfSineDuration = 10000;  // half-sine wave duration in microseconds 50Hz: 10000us, 60Hz: 8333us
 
 // Parameter for sine delay (adjustable between 0 and 100% of the sine)
-volatile uint8_t delayParameter = 0;
+volatile uint8_t dimmingPercentage = 0;
 
 // Interrupt handler for Zero Crossing
 void handleZC() {
@@ -100,15 +100,15 @@ void handleZC() {
 
   // in case dimming at the lowest and highest range: CPU cycles consume time which causes timing mis-align with the actual
   // zero crossing therefore at the lowest and highest end the dimmer is shutoff or full.
-  // Timer is only used in the in-between values.
+  // Timer is only used in the in-between values. Timer3: 1MHz --> Delay thus calculated in microseconds
 
-  switch (delayParameter) {
-    case 0 ... 5:  //
+  switch (dimmingPercentage) {
+    case 0 ... 5:  
       {
         digitalWrite(triacPin, LOW);
         break;
       }
-    case 95 ... 100:  //
+    case 95 ... 100:  
       {
         digitalWrite(triacPin, HIGH);
         break;
@@ -116,14 +116,14 @@ void handleZC() {
     default:
       {
         NRF_TIMER3->TASKS_CLEAR = 1;
-        NRF_TIMER3->CC[0] = maxDelayMs - (uint32_t)delayParameter * maxDelayMs / 100.0;
+        NRF_TIMER3->CC[0] = halfSineDuration - (uint32_t)dimmingPercentage * halfSineDuration / 100.0;
         NRF_TIMER3->TASKS_START = 1;
         NVIC_EnableIRQ(TIMER3_IRQn);
       }
   }
 }
 
-// Timer3 Compare Irq Event Handler, called when timer3 has ended counting
+// Timer3 Compare Irq Event Handler --> delay ended, trigger the triac
 
 extern "C" void TIMER3_IRQHandler_v(void) {
   NVIC_DisableIRQ(TIMER3_IRQn);
@@ -190,7 +190,7 @@ void adjustFanSpeed(int percentage) {
 
 #ifdef ZCD
 
-  delayParameter = percentage;
+  dimmingPercentage = percentage;
 
 #endif
 }
