@@ -42,8 +42,8 @@
 #define MINHR 100
 #define MIDHR 140
 #define MAXHR 160
-#define MINFAN 25
-#define MIDFAN 50
+#define MINFAN 30
+#define MIDFAN 55
 #define MAXFAN 100
 
 // use #define the set the type of dimmer beeing used.
@@ -52,6 +52,10 @@
 
 //#define PWM
 #define ZCD
+
+#define FANSTARTIMMEDIATE
+#define FANSSTARTSPEED 30
+
 
 unsigned long currentMillis;
 
@@ -87,7 +91,7 @@ const uint8_t interruptPin = 2;  // Pin to trigger the interrupt
 const uint8_t triacPin = 6;      // Pin to trigger the TRIAC
 
 // Constants
-const uint32_t pulseWidthUs = 50;   // Pulse width in microseconds for the triac
+const uint32_t pulseWidthUs = 50;         // Pulse width in microseconds for the triac
 const uint32_t halfSineDuration = 10000;  // half-sine wave duration in microseconds 50Hz: 10000us, 60Hz: 8333us
 
 // Parameter for sine delay (adjustable between 0 and 100% of the sine)
@@ -103,12 +107,12 @@ void handleZC() {
   // Timer is only used in the in-between values. Timer3: 1MHz --> Delay thus calculated in microseconds
 
   switch (dimmingPercentage) {
-    case 0 ... 5:  
+    case 0 ... 5:
       {
         digitalWrite(triacPin, LOW);
         break;
       }
-    case 95 ... 100:  
+    case 95 ... 100:
       {
         digitalWrite(triacPin, HIGH);
         break;
@@ -217,13 +221,15 @@ void setup() {
   // Initialize the BLE hardware/environment/library,
   // if fatal error turn on the RED LED and loop forever.
 
-  if (!BLE.begin()) {
+  while (!BLE.begin()) {  //try until you die...
     digitalWrite(LEDR, LOW);
-    while (1)
-      ;
+    delay(1000);
   };
+  digitalWrite(LEDR, HIGH);
 
-  adjustFanSpeed(MINFAN);
+#ifdef FANSTARTIMMEDIATE&& FANSSTARTSPEED
+  adjustFanSpeed(FANSSTARTSPEED);
+#endif
 
   // start scanning for a peripheral advertising the Heart Rate Measurement Service (GATT: UID=180D)
 
@@ -274,11 +280,12 @@ void loop() {
     if (currentMillis - previousMillisBLE >= 300000) {
       previousMillisBLE = currentMillis;
       BLE.end();
-      if (!BLE.begin()) {
+      delay(500);
+      while (!BLE.begin()) {  //try until you die...
         digitalWrite(LEDR, LOW);
-        while (1)
-          ;
+        delay(1000);
       };
+      digitalWrite(LEDR, HIGH);
       BLE.scanForUuid("180D");
     }
   }
