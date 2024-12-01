@@ -20,8 +20,13 @@
 #include <ArduinoBLE.h>
 #include <mbed.h>
 
-// START OF CONFIG SECTION
+// TODO's
+// - Change pin number 2 and 6 into #defines
+// - Make access to dimmingPercentage variable safe as it can be written to during an interupt that reads the value
 
+// ***********************
+// START OF CONFIG SECTION
+// ***********************
 
 // There is no sensor pairing functionality implemented under the assumption that there is only 1
 // HR sensor active while using the indoor trainer in private spaces.
@@ -31,15 +36,21 @@
 
 #define SENSORNAME "HRM-Dual:560827"
 
+// set the battery low treshold percentage, below this threshold a slow blinking green LED signals a low battery charge
+// Garmin sensors cannot be recharged, have to replace the battery, use a fairly low treshold like 15
+// Wahoo sensors are rechargeble, set a higher treshold (>25) as these also drain faster
+
+#define SENSORBATLOW 15
+
 // The number of heartrate samples to smooth single readings.
 // The sensor is read once per second and the fanspeed is adjusted once per HRSAMPLES seconds.
-// The fan has some inertia of it's own, more frequent adjustments have little use and is not too slow
+// The fan has some inertia of it's own, more frequent adjustments have little use
 
 #define HRSAMPLES 5
 
-// HR is mapped to the PWM duty-cycle with the Arduino map() function
+// HR is mapped to the fan speed with the Arduino map() function
 // A midpoint value is available to alter the steepness of the linear map at some point
-// HR values in bpm, duty-cycle in percentage 0-100% (because of integer calculation inside function map())
+// HR values in bpm, fanspeed in percentage 0-100%
 // Adjust these 6 values to your own heart rates (and non-linearities of the fan).
 
 #define MINHR 100
@@ -49,20 +60,23 @@
 #define MIDFAN 55
 #define MAXFAN 100
 
-// The fan runs at set speed when no heartrate sensor not found or connected
-// Comment out the FANSTARTIMMEDIATE to keep the fan switched of until the sensor is connected
+// When FANSTARTIMMEDiATE is defined the fan starts running immediate,
+// otherwise it does not run umtil the HR sensor is found.
+// use FANSTARTSPEED to set the speed, same scale as above
 
 #define FANSTARTIMMEDIATE
 #define FANSTARTSPEED 30
 
-// Set the type of AC dimmer used:
+// Set the type of AC dimmer that is beeing used:
 //    PWM: Dimmer controlled by PWM
 //    ZCD: Dimmer that signals Zero-Crossing, sketch calculates the trigger Delay
 
 //#define PWM
 #define ZCD
 
+// *********************
 // END OF CONFIG SECTION
+// *********************
 
 unsigned long currentMillis;
 
@@ -77,7 +91,7 @@ unsigned long previousMillisBLE = 0;
 
 #ifdef PWM
 
-// To regulate the speed of the fan a PWM controlled AC dimmer is used, sourced from AliExpress.
+// To regulate the speed of the fan a PWM controlled AC dimmer is used, can be sourced from AliExpress.
 // Tests showed that this AC dimmer works better at a lower PWM frequency than the standard Arduino PWM frequency
 // Instead of analogWrite() a MBED OS PWM function is used to generate a 250Hz PWM, therefore that piece of code is
 // Nano 33 BLE Rev 2 specific
@@ -88,30 +102,31 @@ mbed::PwmOut* pwmOnPin = new mbed::PwmOut(digitalPinToPinName(D6));
 
 #ifdef ZCD
 
-// To regulate the speed of the fan an AC dimmer with Zero Crossing detection is used, sourced from AliExpress.
-// For delay timing of the triggering of the triac Nano 33 BLE Rev 2 specific code is used.
+// To regulate the speed of the fan an AC dimmer with Zero Crossing detection is used, can be sourced from AliExpress.
+// For delay timing of the triac trigger Nano 33 BLE Rev 2 specific code is used.
 
 #include <nrf_timer.h>
 
 // Pin definitions
-const uint8_t interruptPin = 2;  // Pin to trigger the interrupt
-const uint8_t triacPin = 6;      // Pin to trigger the TRIAC
+const uint8_t interruptPin = 2;  // Zero cross detection pin to trigger an interrupt
+const uint8_t triacPin = 6;      // Triac gate trigger pin
 
 // Constants
-const uint32_t pulseWidthUs = 50;         // Pulse width in microseconds for the triac
+const uint32_t pulseWidthUs = 50;         // Pulse width in microseconds for the triac gate to start conducting
 const uint32_t halfSineDuration = 10000;  // half-sine wave duration in microseconds 50Hz: 10000us, 60Hz: 8333us
 
-// Parameter for sine delay (adjustable between 0 and 100% of the sine)
+// Global parameter storing the current dimming value (leading edge trimming)
 volatile uint8_t dimmingPercentage = 0;
 
-// Interrupt handler for Zero Crossing
+// Interrupt handler for the Zero Crossing
 void handleZC() {
 
   NVIC_DisableIRQ(TIMER3_IRQn);
 
   // in case dimming at the lowest and highest range: CPU cycles consume time which causes timing mis-align with the actual
-  // zero crossing therefore at the lowest and highest end the dimmer is shutoff or full.
-  // Timer is only used in the in-between values. Timer3: 1MHz --> Delay thus calculated in microseconds
+  // zero crossing/sine therefore at the lowest and highest values the dimmer is just shutoff or switched on permanentely.
+  // Timer is only used in the in-between values. Timer3: 1MHz --> Delay thus calculated in microseconds.
+  // you can experiment with other values then 5 and 95 closer to 0 and 100.
 
   switch (dimmingPercentage) {
     case 0 ... 5:
@@ -122,6 +137,8 @@ void handleZC() {
     case 95 ... 100:
       {
         digitalWrite(triacPin, HIGH);
+        delayMicroseconds(pulseWidthUs);
+        digitalWrite(triacPin, LOW);
         break;
       }
     default:
@@ -134,7 +151,7 @@ void handleZC() {
   }
 }
 
-// Timer3 Compare Irq Event Handler --> delay ended, trigger the triac
+// Timer3 Event Handler --> delay ended, trigger the triac
 
 extern "C" void TIMER3_IRQHandler_v(void) {
   NVIC_DisableIRQ(TIMER3_IRQn);
@@ -154,7 +171,7 @@ extern "C" void TIMER3_IRQHandler_v(void) {
 
 #endif
 
-void setupFanSpeed() {
+void setupFanController() {
 
 #ifdef PWM
 
@@ -186,9 +203,19 @@ void setupFanSpeed() {
   attachInterrupt(digitalPinToInterrupt(interruptPin), handleZC, RISING);
 
 #endif
+
+#ifdef FANSTARTIMMEDIATE
+#ifdef FANSTARTSPEED
+  adjustFanSpeed(FANSTARTSPEED);
+#else
+  adjustFanSpeed(MINFAN);
+#endif
+#endif
 }
 
 void adjustFanSpeed(int percentage) {
+
+  // Range check
 
   if (percentage < 0) percentage = 0;
   if (percentage > 100) percentage = 100;
@@ -209,9 +236,9 @@ void adjustFanSpeed(int percentage) {
 
 void setup() {
 
-  // do needed setups for the attached fan controller/dimmer
+  // do needed setups for the attached controller/dimmer
 
-  setupFanSpeed();
+  setupFanController();
 
   //Set the builtin RGB LED's ports to Output, but this turns the LED's on too!
   //as the On/Off logic is inverted due to the NANO 33 BLE hardware design.
@@ -226,17 +253,13 @@ void setup() {
   digitalWrite(LEDG, HIGH);
 
   // Initialize the BLE hardware/environment/library,
-  // if fatal error turn on the RED LED and loop forever.
+  // if fatal error turn on the RED LED and keep trying
 
-  while (!BLE.begin()) {  //try until you die...
+  while (!BLE.begin()) {
     digitalWrite(LEDR, LOW);
     delay(1000);
   };
   digitalWrite(LEDR, HIGH);
-
-#ifdef FANSTARTIMMEDIATE&& FANSTARTSPEED
-  adjustFanSpeed(FANSTARTSPEED);
-#endif
 
   // start scanning for a peripheral advertising the Heart Rate Measurement Service (GATT: UID=180D)
 
@@ -282,20 +305,10 @@ void loop() {
 
     // There seems to be an issue with the BLE.scan function and/or Nano 33 BLE Rev2.
     // After about 5 to 10 minutes of scanning for peripherals the BLE.scan function does not work anymore.
-    // The workaround is to stop and start the BLE environment every 5 minutes
+    // The workaround is a crowbar to reboot the arduino
 
     if (currentMillis - previousMillisBLE >= 300000) {
       previousMillisBLE = currentMillis;
-      /*
-      BLE.end();
-      delay(500);
-      while (!BLE.begin()) {  //try until you die...
-        digitalWrite(LEDR, LOW);
-        delay(1000);
-      };
-      digitalWrite(LEDR, HIGH);
-      BLE.scanForUuid("180D");
-      */
       NVIC_SystemReset();
     }
   }
@@ -303,6 +316,8 @@ void loop() {
 
 void HRM2FAN(BLEDevice peripheral) {
 
+  byte BATcharvalue[2];
+  bool BatteryGood = true;
   byte HRMcharvalue[2];
   uint8_t HRsampleValue[HRSAMPLES];
   int HRsampleCount;
@@ -322,10 +337,19 @@ void HRM2FAN(BLEDevice peripheral) {
     return;
   }
 
+  // Retrieve the battery level, if 2A19 not present, assume battery charge level is okay.
+
+  BatteryGood = true;
+  BLECharacteristic BATCharacteristic = peripheral.characteristic("2A19");
+  if (BATCharacteristic) {
+    BATCharacteristic.readValue(BATcharvalue, 1);
+    if ((uint8_t)BATcharvalue[0] <= SENSORBATLOW) BatteryGood = false;
+  }
+
   // Retrieve the heart rate characteristic (2A37), if not available: disconnect, return to search again
 
-  BLECharacteristic Characteristic = peripheral.characteristic("2A37");
-  if (!Characteristic) {
+  BLECharacteristic HRCharacteristic = peripheral.characteristic("2A37");
+  if (!HRCharacteristic) {
     peripheral.disconnect();
     return;
   }
@@ -333,7 +357,7 @@ void HRM2FAN(BLEDevice peripheral) {
   // The heart rate characteristic is a 'Notify' and must be subscribed to, to get values
   // If not able to subscribe: disconnect, return to search again
 
-  if (!Characteristic.subscribe()) {
+  if (!HRCharacteristic.subscribe()) {
     peripheral.disconnect();
     return;
   };
@@ -354,11 +378,11 @@ void HRM2FAN(BLEDevice peripheral) {
 
     // The characterisc 2A37 is of type Notify, check if a notification was send by the sensor
 
-    if (Characteristic.valueUpdated()) {
+    if (HRCharacteristic.valueUpdated()) {
 
       //FIXME: is this read needed?
 
-      Characteristic.read();
+      //HRCharacteristic.read();
 
       // Sensor attribute values are send as a variable length byte array
       // In case of the hearth rate it can be 2 to 512 bytes long
@@ -366,7 +390,7 @@ void HRM2FAN(BLEDevice peripheral) {
       // the first bit in the flag byte defines if wether the heart rate is send in 1 or 2 bytes, 8 or 16 interger.
       // This Arduino sketch takes a short-cut: it ignores this all as the Garmin sensor only uses 1 byte to send the HR value
 
-      Characteristic.readValue(HRMcharvalue, 2);
+      HRCharacteristic.readValue(HRMcharvalue, 2);
       HRsampleValue[HRsampleCount] = HRMcharvalue[1];  //retrieve the HR from the 2nd byte
       HRsampleCount++;
 
@@ -410,13 +434,23 @@ void HRM2FAN(BLEDevice peripheral) {
       }
     }
 
+// If the sensor battery charge is low then slowly blink the green LED
+
+    if (!BatteryGood) {
+      ledState = !ledState;
+      digitalWrite(LEDG, ledState ? HIGH : LOW);
+    }
     delay(1000);
   }
 
   // connection lost, switch fan off or it's lowest defined speed, switch of the green LED
 
-#ifdef FANSTARTIMMEDIATE&& FANSTARTSPEED
+#ifdef FANSTARTIMMEDIATE
+#ifdef FANSTARTSPEED
   adjustFanSpeed(FANSTARTSPEED);
+#else
+  adjustFanSpeed(MINFAN);
+#endif
 #else
   adjustFanSpeed(0);
 #endif
