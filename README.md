@@ -29,15 +29,19 @@ BE AWARE THAT YOU'LL BE WORKING WITH DEADLY LIVE VOLTAGES. TAKE APPROPRIATE SAFE
 
 ## Possible enhancements
 
-+ Battery check as far as exposed (Garmin does on the HRM Dual)
 + Do away with hardcoded pairing
 + Create an UI (e.g. a 2-Line display and rotary encoder) for pairing, map settings. 
 + Alternate fan speed mapping methods (speed, power,...).
 
 ## Change Log
 
-### v1.0.0
-+ Initial release
+### in development (main)
++ code cleanup
++ added battery level chec
 
 ### v1.1.0
 + added code for 2nd type of dimmer
+
+### v1.0.0
++ Initial release
+
