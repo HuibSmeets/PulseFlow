@@ -20,6 +20,9 @@
 #include <ArduinoBLE.h>
 #include <mbed.h>
 
+// START OF CONFIG SECTION
+
+
 // There is no sensor pairing functionality implemented under the assumption that there is only 1
 // HR sensor active while using the indoor trainer in private spaces.
 // However some trainers have a HR bridge function.
@@ -46,16 +49,20 @@
 #define MIDFAN 55
 #define MAXFAN 100
 
-// use #define the set the type of dimmer beeing used.
+// The fan runs at set speed when no heartrate sensor not found or connected
+// Comment out the FANSTARTIMMEDIATE to keep the fan switched of until the sensor is connected
+
+#define FANSTARTIMMEDIATE
+#define FANSTARTSPEED 30
+
+// Set the type of AC dimmer used:
 //    PWM: Dimmer controlled by PWM
-//    ZCD: Dimmer that signals Zero-Crossing, sketch calculates the trigger delay
+//    ZCD: Dimmer that signals Zero-Crossing, sketch calculates the trigger Delay
 
 //#define PWM
 #define ZCD
 
-#define FANSTARTIMMEDIATE
-#define FANSSTARTSPEED 30
-
+// END OF CONFIG SECTION
 
 unsigned long currentMillis;
 
@@ -227,8 +234,8 @@ void setup() {
   };
   digitalWrite(LEDR, HIGH);
 
-#ifdef FANSTARTIMMEDIATE&& FANSSTARTSPEED
-  adjustFanSpeed(FANSSTARTSPEED);
+#ifdef FANSTARTIMMEDIATE&& FANSTARTSPEED
+  adjustFanSpeed(FANSTARTSPEED);
 #endif
 
   // start scanning for a peripheral advertising the Heart Rate Measurement Service (GATT: UID=180D)
@@ -279,6 +286,7 @@ void loop() {
 
     if (currentMillis - previousMillisBLE >= 300000) {
       previousMillisBLE = currentMillis;
+      /*
       BLE.end();
       delay(500);
       while (!BLE.begin()) {  //try until you die...
@@ -287,6 +295,8 @@ void loop() {
       };
       digitalWrite(LEDR, HIGH);
       BLE.scanForUuid("180D");
+      */
+      NVIC_SystemReset();
     }
   }
 }
@@ -403,9 +413,13 @@ void HRM2FAN(BLEDevice peripheral) {
     delay(1000);
   }
 
-  // connection lost, set the fan to it's lowest defined speed, switch of the green LED
+  // connection lost, switch fan off or it's lowest defined speed, switch of the green LED
 
-  adjustFanSpeed(MINFAN);
+#ifdef FANSTARTIMMEDIATE&& FANSTARTSPEED
+  adjustFanSpeed(FANSTARTSPEED);
+#else
+  adjustFanSpeed(0);
+#endif
 
   digitalWrite(LEDG, HIGH);
 }
