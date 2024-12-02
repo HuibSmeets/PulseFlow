@@ -1,5 +1,5 @@
 # PulseFlow
-Control the speed of a cooling fan with your heart rate
+Control the speed of a cooling fan with your heart rate while riding/using your indoor trainer.
 
 <img src="Prototype.JPG" alt="Alt text" width="400">
 Image: Prototype, work in progress
