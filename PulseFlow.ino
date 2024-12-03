@@ -21,8 +21,8 @@
 #include <mbed.h>
 
 // TODO's
-// - Change pin number 2 and 6 into #defines
-// - Make access to dimmingPercentage variable safe as it can be written to during an interupt that reads the value
+// - Change pin number 2 and 6 into #define for the config section below
+// - Implement a "true RMS" regulator, currently it is a linear map 0-100% to 0-Pi phase angle cut
 
 // ***********************
 // START OF CONFIG SECTION
@@ -37,8 +37,8 @@
 #define SENSORNAME "HRM-Dual:560827"
 
 // set the battery low treshold percentage, below this threshold a slow blinking green LED signals a low battery charge
-// Garmin sensors cannot be recharged, have to replace the battery, use a fairly low treshold like 15
-// Wahoo sensors are rechargeble, set a higher treshold (>25) as these also drain faster
+// Garmin sensors cannot be recharged, have to replace the battery, but use a fairly low treshold like 10 to 15
+// Wahoo sensors are rechargeble, set a higher treshold (20 to 25) as these drain faster
 
 #define SENSORBATLOW 15
 
@@ -61,17 +61,21 @@
 #define MAXFAN 100
 
 // When FANSTARTIMMEDiATE is defined the fan starts running immediate,
-// otherwise it does not run umtil the HR sensor is found.
+//   if FANSTARTIMMEDUATE is not defined the fan will not run umtil the HR sensor is connected
 // use FANSTARTSPEED to set the speed, same scale as above
+//  if FANSTARTSPEED is not defined MINFAN will be used.
+// use FANSPEEDDISCONNECTED to set the speed when sensor gets disconnected
+//  if FANSPEEDDISCONNECTED not defined the current set speed is retained
 
 #define FANSTARTIMMEDIATE
-#define FANSTARTSPEED 30
+// #define FANSTARTSPEED 30
+// #define FANSPEEDDISCONNECTED 55
 
 // Set the type of AC dimmer that is beeing used:
 //    PWM: Dimmer controlled by PWM
 //    ZCD: Dimmer that signals Zero-Crossing, sketch calculates the trigger Delay
 
-//#define PWM
+// #define PWM
 #define ZCD
 
 // *********************
@@ -284,7 +288,7 @@ void loop() {
     // The "main business" loop of reading sensor values and adjusting the fan speed
     // until the sensor is no longer connected
 
-    HRM2FAN(peripheral);
+    HR2FAN(peripheral);
 
     // The sensor is not connected anymore, start searching again
 
@@ -314,14 +318,14 @@ void loop() {
   }
 }
 
-void HRM2FAN(BLEDevice peripheral) {
+void HR2FAN(BLEDevice peripheral) {
 
-  byte BATcharvalue[2];
+  byte BatteryLevel;
   bool BatteryGood = true;
   byte HRMcharvalue[2];
   uint8_t HRsampleValue[HRSAMPLES];
   int HRsampleCount;
-  int FanDutyCycle;
+  int FanSpeedPercentage;
   int HRavg;
 
   // Connect to the found peripheral, if not able to connect: exit and start searching for a periphiral again.
@@ -337,13 +341,13 @@ void HRM2FAN(BLEDevice peripheral) {
     return;
   }
 
-  // Retrieve the battery level, if 2A19 not present, assume battery charge level is okay.
+  // Retrieve the battery level, if 2A19 not present, assume battery charge level is always okay.
 
   BatteryGood = true;
   BLECharacteristic BATCharacteristic = peripheral.characteristic("2A19");
   if (BATCharacteristic) {
-    BATCharacteristic.readValue(BATcharvalue, 1);
-    if ((uint8_t)BATcharvalue[0] <= SENSORBATLOW) BatteryGood = false;
+    BATCharacteristic.readValue(&BatteryLevel, 1);
+    if ((uint8_t)BatteryLevel <= SENSORBATLOW) BatteryGood = false;
   }
 
   // Retrieve the heart rate characteristic (2A37), if not available: disconnect, return to search again
@@ -407,25 +411,25 @@ void HRM2FAN(BLEDevice peripheral) {
         // Map the HR to a dutycycle, low to mid and mid to high ranges
 
         if (HRavg >= MINHR && HRavg <= MIDHR) {
-          FanDutyCycle = map(HRavg, MINHR, MIDHR, MINFAN, MIDFAN);
+          FanSpeedPercentage = map(HRavg, MINHR, MIDHR, MINFAN, MIDFAN);
         }
         if (HRavg > MIDHR && HRavg <= MAXHR) {
-          FanDutyCycle = map(HRavg, MIDHR, MAXHR, MIDFAN, MAXFAN);
+          FanSpeedPercentage = map(HRavg, MIDHR, MAXHR, MIDFAN, MAXFAN);
         }
 
         // the map function returns out of range values when the input is also out of the set range
         // if the HR is outside the map range, set the duty cycle to its minimum or maximum
 
         if (HRavg < MINHR) {
-          FanDutyCycle = MINFAN;
+          FanSpeedPercentage = MINFAN;
         }
         if (HRavg > MAXHR) {
-          FanDutyCycle = MAXFAN;
+          FanSpeedPercentage = MAXFAN;
         }
 
         // adjust the speed of the fan
 
-        adjustFanSpeed(FanDutyCycle);
+        adjustFanSpeed(FanSpeedPercentage);
 
         // clear the array with HR samples
 
@@ -434,7 +438,7 @@ void HRM2FAN(BLEDevice peripheral) {
       }
     }
 
-// If the sensor battery charge is low then slowly blink the green LED
+// If the sensor battery charge is low then 'slowly' blink the green LED
 
     if (!BatteryGood) {
       ledState = !ledState;
@@ -443,16 +447,10 @@ void HRM2FAN(BLEDevice peripheral) {
     delay(1000);
   }
 
-  // connection lost, switch fan off or it's lowest defined speed, switch of the green LED
+  // connection lost, optinally set fan to a defined speed, switch of the green LED
 
-#ifdef FANSTARTIMMEDIATE
-#ifdef FANSTARTSPEED
-  adjustFanSpeed(FANSTARTSPEED);
-#else
-  adjustFanSpeed(MINFAN);
-#endif
-#else
-  adjustFanSpeed(0);
+#ifdef FANSPEEDDISCONNECTED
+  adjustFanSpeed(FANSPEEDDISCONNECTED);
 #endif
 
   digitalWrite(LEDG, HIGH);
