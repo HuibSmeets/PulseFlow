@@ -37,7 +37,7 @@ BE AWARE THAT YOU'LL BE WORKING WITH DEADLY LIVE VOLTAGES. TAKE APPROPRIATE SAFE
 
 ### in development (main)
 + code cleanup
-+ added battery level chec
++ added battery level check
 
 ### v1.1.0
 + added code for 2nd type of dimmer
