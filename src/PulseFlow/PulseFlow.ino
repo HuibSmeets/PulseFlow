@@ -75,10 +75,6 @@ unsigned long currentMillis;
 unsigned long previousMillisLED = 0;
 bool ledState = false;
 
-// Workaround for an ArduinoBLE issue, see below.
-
-unsigned long previousMillisBLE = 0;
-
 #ifdef PWM
 
 // To regulate the speed of the fan a PWM controlled AC dimmer is used, can be sourced from AliExpress.
@@ -109,6 +105,10 @@ const uint32_t halfSineDuration = 10000;  // half-sine wave duration in microsec
 volatile uint8_t dimmingPercentage = 0;
 
 // Interrupt handler for the Zero Crossing
+
+volatile unsigned long zcperiodprev = 0;
+volatile unsigned long zcperiod = 0;
+
 void handleZC() {
 
   NVIC_DisableIRQ(TIMER3_IRQn);
@@ -118,8 +118,8 @@ void handleZC() {
   // Timer is only used in the in-between values. Timer3: 1MHz --> Delay thus calculated in microseconds.
   // you can experiment with other values then 5 and 95 closer to 0 and 100.
 
-  if (dimmingPercentage < 0) dimmingPercentage = 0;
-  if (dimmingPercentage > 100) dimmingPercentage = 100;
+  zcperiod = micros() - zcperiodprev;
+  zcperiodprev = micros();
 
   switch (dimmingPercentage) {
     case 0 ... 5:
@@ -130,8 +130,8 @@ void handleZC() {
     case 95 ... 100:
       {
         digitalWrite(triacPin, HIGH);
-        delayMicroseconds(pulseWidthUs);
-        digitalWrite(triacPin, LOW);
+        //        delayMicroseconds(pulseWidthUs);
+        //        digitalWrite(triacPin, LOW);
         break;
       }
     default:
@@ -218,6 +218,8 @@ void adjustFanSpeed(int percentage) {
 #endif
 }
 
+// Workaround for an ArduinoBLE issue(s), see below.
+unsigned long previousMillisBLE = millis();
 
 void setup() {
 
@@ -250,6 +252,7 @@ void setup() {
 
   // start scanning for a peripheral advertising the Heart Rate Measurement Service (GATT: UID=180D)
 
+  previousMillisBLE = 0;
   BLE.scanForUuid("180D");
 }
 
@@ -275,7 +278,7 @@ void loop() {
 
     // The sensor is not connected anymore, start searching again
 
-    previousMillisBLE = 0;
+    previousMillisBLE = millis();
     BLE.scanForUuid("180D");
 
   } else {
@@ -361,9 +364,6 @@ void HR2FAN(BLEDevice peripheral) {
 
   // As long a the sensor is connected: read the HR from the sensor
 
-  bool returned_good_value = true;
-  previousMillisBLE = 0;
-
   while (peripheral.connected()) {
 
     // The characterisc 2A37 is of type Notify, check if a notification was send by the sensor
@@ -376,69 +376,58 @@ void HR2FAN(BLEDevice peripheral) {
       // the first bit in the flag byte defines if the heart rate is send in 1 or 2 bytes, 8 or 16 interger.
       // This Arduino sketch takes a short-cut: it ignores this all as the Garmin sensor only uses 1 byte to send the HR value
 
-      if (!HRCharacteristic.readValue(HRMcharvalue, 2)) {
-        if (returned_good_value) {}
-        returned_good_value = false;
-        previousMillisBLE = millis();
-      }
-      if (millis() - previousMillisBLE > 10000) {  // keeps failing to return a value, something wrongf, reset.
-        NVIC_SystemReset();
-      }
-    } else {
-      returned_good_value = true;
-      if (HRMcharvalue[1] > 39 && HRMcharvalue[1] < 201) {  //only "sane" HR values
-        HRsampleValue[HRsampleCount] = HRMcharvalue[1];     //retrieve the HR from the 2nd byte
+      if (HRCharacteristic.readValue(HRMcharvalue, 2)) {
+        HRsampleValue[HRsampleCount] = HRMcharvalue[1];  //retrieve the HR from the 2nd byte
         HRsampleCount++;
       }
+      // When the set number of HR samples have been read: calculate the average, map the HR to the duty cycle, adjust the fan speed
+
+      if (HRsampleCount >= HRSAMPLES) {
+
+        // Average HR calculation
+
+        HRavg = 0;
+        for (int i = 0; i < HRSAMPLES; i++) HRavg += HRsampleValue[i];
+        HRavg = HRavg / HRSAMPLES;
+
+        // the map function returns out of range values when the input is also out of the set range
+        // if the HR is outside the map range, set the duty cycle to its minimum or maximum
+
+        if (HRavg < MINHR) {
+          FanSpeedPercentage = MINFAN;
+        }
+        if (HRavg > MAXHR) {
+          FanSpeedPercentage = MAXFAN;
+        }
+
+        // Map the HR to a dutycycle, low to mid and mid to high ranges
+
+        if (HRavg >= MINHR && HRavg <= MIDHR) {
+          FanSpeedPercentage = map(HRavg, MINHR, MIDHR, MINFAN, MIDFAN);
+        }
+        if (HRavg > MIDHR && HRavg <= MAXHR) {
+          FanSpeedPercentage = map(HRavg, MIDHR, MAXHR, MIDFAN, MAXFAN);
+        }
+
+        // adjust the speed of the fan
+
+        adjustFanSpeed(FanSpeedPercentage);
+
+        // clear the array with HR samples
+
+        HRsampleCount = 0;
+        for (int i = 0; i < HRSAMPLES; i++) HRsampleValue[i] = 0;
+      }
+
+      // If the sensor battery charge is low then 'slowly' blink the green LED
+
+      if (!BatteryGood) {
+        ledState = !ledState;
+        digitalWrite(LEDG, ledState ? HIGH : LOW);
+      }
+      delay(1000);
     }
-    // When the set number of HR samples have been read: calculate the average, map the HR to the duty cycle, adjust the fan speed
-
-    if (HRsampleCount >= HRSAMPLES) {
-
-      // Average HR calculation
-
-      HRavg = 0;
-      for (int i = 0; i < HRSAMPLES; i++) HRavg += HRsampleValue[i];
-      HRavg = HRavg / HRSAMPLES;
-
-      // the map function returns out of range values when the input is also out of the set range
-      // if the HR is outside the map range, set the duty cycle to its minimum or maximum
-
-      if (HRavg < MINHR) {
-        FanSpeedPercentage = MINFAN;
-      }
-      if (HRavg > MAXHR) {
-        FanSpeedPercentage = MAXFAN;
-      }
-
-      // Map the HR to a dutycycle, low to mid and mid to high ranges
-
-      if (HRavg >= MINHR && HRavg <= MIDHR) {
-        FanSpeedPercentage = map(HRavg, MINHR, MIDHR, MINFAN, MIDFAN);
-      }
-      if (HRavg > MIDHR && HRavg <= MAXHR) {
-        FanSpeedPercentage = map(HRavg, MIDHR, MAXHR, MIDFAN, MAXFAN);
-      }
-
-      // adjust the speed of the fan
-
-      adjustFanSpeed(FanSpeedPercentage);
-
-      // clear the array with HR samples
-
-      HRsampleCount = 0;
-      for (int i = 0; i < HRSAMPLES; i++) HRsampleValue[i] = 0;
-    }
-
-    // If the sensor battery charge is low then 'slowly' blink the green LED
-
-    if (!BatteryGood) {
-      ledState = !ledState;
-      digitalWrite(LEDG, ledState ? HIGH : LOW);
-    }
-    delay(1000);
   }
-
   // connection lost, set fan to a defined speed, switch off the green LED
 
   adjustFanSpeed(MINFAN);
