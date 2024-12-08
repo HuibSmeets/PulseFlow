@@ -106,9 +106,6 @@ volatile uint8_t dimmingPercentage = 0;
 
 // Interrupt handler for the Zero Crossing
 
-volatile unsigned long zcperiodprev = 0;
-volatile unsigned long zcperiod = 0;
-
 void handleZC() {
 
   NVIC_DisableIRQ(TIMER3_IRQn);
@@ -117,9 +114,6 @@ void handleZC() {
   // zero crossing/sine therefore at the lowest and highest values the dimmer is just shutoff or switched on permanentely.
   // Timer is only used in the in-between values. Timer3: 1MHz --> Delay thus calculated in microseconds.
   // you can experiment with other values then 5 and 95 closer to 0 and 100.
-
-  zcperiod = micros() - zcperiodprev;
-  zcperiodprev = micros();
 
   switch (dimmingPercentage) {
     case 0 ... 5:
